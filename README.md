@@ -362,16 +362,3 @@ mlops-churn/
 
 
 
-## Key Engineering Decisions
-
-**sklearn Pipeline prevents train/serve skew**
-The most common silent failure in production ML is applying different preprocessing at training vs. serving time. By wrapping the preprocessor and model in a single `Pipeline`, the same object that was fitted during training handles all inference — no divergence possible.
-
-**OrdinalEncoder for `Contract` instead of OneHotEncoder**
-Contract type (`Month-to-month`, `One year`, `Two year`) has a natural order that directly correlates with churn risk. OrdinalEncoder preserves this ordering (0, 1, 2), which helps gradient boosting trees find cleaner decision boundaries than the three separate binary columns OneHotEncoder would produce.
-
-**Local `.pkl` fallback for the API**
-`train.py` saves the model both to MLflow and to `models/churn_pipeline.pkl`. The API tries MLflow first (if `MLFLOW_TRACKING_URI` is set), then falls back to the local file. This means the API is always runnable for local development without needing Docker or a running MLflow server.
-
-**Stratified splits and cross-validation throughout**
-With a 26% churn rate, random splitting can produce splits with meaningfully different class distributions. Stratified splitting (and stratified K-fold cross-validation) ensures each split and each fold mirrors the overall class balance, making metrics reliable and comparable across runs.
