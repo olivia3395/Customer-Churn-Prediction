@@ -1,0 +1,76 @@
+version: "3.9"
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+volumes:
+  mlflow_data:
+
+# ── Services ──────────────────────────────────────────────────────────────────
+services:
+
+  # ── 1. MLflow Tracking Server ──────────────────────────────────────────────
+  mlflow:
+    image: python:3.11-slim
+    command: >
+      bash -c "pip install mlflow --quiet &&
+               mlflow server
+               --host 0.0.0.0
+               --port 5000
+               --backend-store-uri sqlite:////mlflow/mlflow.db
+               --default-artifact-root /mlflow/artifacts"
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # ── 2. Train + Promote (runs once, then exits) ─────────────────────────────
+  trainer:
+    build: .
+    command: >
+      bash -c "python data/load_data.py &&
+               python src/train.py &&
+               python promote_model.py"
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./reports:/app/reports
+    depends_on:
+      mlflow:
+        condition: service_healthy
+
+  # ── 3. Prediction API ──────────────────────────────────────────────────────
+  api:
+    build: .
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - MODEL_NAME=churn-classifier
+      - MODEL_STAGE=Production
+    volumes:
+      - ./models:/app/models
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      retries: 5
+
+  # ── 4. Monitoring (runs once against latest production data) ───────────────
+  monitoring:
+    build: .
+    command: python monitoring/monitor.py
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+    depends_on:
+      - api
